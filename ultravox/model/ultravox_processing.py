@@ -8,6 +8,12 @@ import transformers
 
 from .ultravox_config import UltravoxConfig
 
+try:
+    from .nest_processor import NestProcessor, NEMO_AVAILABLE
+    from .nest_encoder import NestEncoder
+except ImportError:
+    NEMO_AVAILABLE = False
+
 
 @dataclasses.dataclass
 class DataCollatorForSeq2SeqWithAudio(transformers.DataCollatorForSeq2Seq):
@@ -74,7 +80,7 @@ class UltravoxProcessor(transformers.ProcessorMixin):
     """
 
     attributes = ["audio_processor", "tokenizer"]
-    audio_processor_class = ("WhisperProcessor",)
+    audio_processor_class = ("WhisperProcessor", "NestProcessor")
     tokenizer_class = (
         "PreTrainedTokenizer",
         "PreTrainedTokenizerFast",
@@ -118,16 +124,27 @@ class UltravoxProcessor(transformers.ProcessorMixin):
 
         super().__init__(audio_processor=audio_processor, tokenizer=tokenizer)
 
+        # Handle different encoder downsampling factors based on processor type
+        if isinstance(audio_processor, NestProcessor):
+            # NEST models have a different downsampling factor than Whisper
+            # Adjust the encoder_ds_factor accordingly (this is an example - you'll need to adjust for your specific NEST model)
+            self.encoder_ds_factor = 4
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
         config: UltravoxConfig = transformers.AutoConfig.from_pretrained(
             pretrained_model_name_or_path, **kwargs
         )
-        audio_processor = transformers.AutoProcessor.from_pretrained(
-            config.audio_model_id
-            or config.audio_config._name_or_path
-            or "openai/whisper-tiny"
-        )
+        if "nest" in config.audio_model_id.lower():
+            audio_processor = NestEncoder.from_pretrained(
+                config.audio_model_id, **kwargs
+            )
+        else:
+            audio_processor = transformers.AutoProcessor.from_pretrained(
+                config.audio_model_id
+                or config.audio_config._name_or_path
+                or "openai/whisper-tiny"
+            )
 
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **kwargs
@@ -253,7 +270,10 @@ class UltravoxProcessor(transformers.ProcessorMixin):
             audios = [x.numpy() if isinstance(x, torch.Tensor) else x for x in audios]
 
             # Pad out each audio to at least 2 hops (the minimum required by the processor).
-            hop_length = self.audio_processor.feature_extractor.hop_length
+            if isinstance(self.audio_processor, NestEncoder):
+                hop_length = self.audio_processor.nest_model.encoder._cfg.preprocessor.window_stride * sampling_rate
+            else:
+                hop_length = self.audio_processor.feature_extractor.hop_length
             audios = [
                 (
                     np.pad(x, (0, 2 * hop_length - len(x)), mode="constant")

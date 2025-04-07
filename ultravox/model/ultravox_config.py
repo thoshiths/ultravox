@@ -67,6 +67,9 @@ class UltravoxConfig(transformers.PretrainedConfig):
             The LoRA configuration for finetuning the audio model.
         audio_latency_block_size (`int`, *optional*, defaults to `None`):
             The latency block size for simulating audio streaming.
+        nest_layer (`str`, *optional*, defaults to `"last"`):
+            The layer configuration for NEST encoder. Can be "last", "all", or comma-separated indices.
+            Only used when the audio encoder is a NEST model.
 
 
     Example:
@@ -111,6 +114,7 @@ class UltravoxConfig(transformers.PretrainedConfig):
         text_model_lora_config: Optional[LoraConfigSimplified] = None,
         audio_model_lora_config: Optional[LoraConfigSimplified] = None,
         audio_latency_block_size: Optional[int] = None,
+        nest_layer: str = "last",  # defaults to "last" for NEST encoder
         **kwargs,
     ):
         self.ignore_index = ignore_index
@@ -123,6 +127,7 @@ class UltravoxConfig(transformers.PretrainedConfig):
         self.norm_init = norm_init
         self.projector_act = projector_act
         self.projector_ln_mid = projector_ln_mid
+        self.nest_layer = nest_layer  # Store the NEST layer configuration
         if text_model_id is not None:
             self.text_config: transformers.LlamaConfig = (
                 transformers.AutoConfig.from_pretrained(text_model_id)

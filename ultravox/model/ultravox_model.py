@@ -18,6 +18,12 @@ from .ultravox_config import LossConfig
 from .ultravox_config import LossFunction
 from .ultravox_config import UltravoxConfig
 
+# Import the NEST encoder
+try:
+    from .nest_encoder import NestEncoder, NEMO_AVAILABLE
+except ImportError:
+    NEMO_AVAILABLE = False
+
 
 class UltravoxModel(transformers.LlamaPreTrainedModel):
     """
@@ -317,7 +323,7 @@ class UltravoxModel(transformers.LlamaPreTrainedModel):
     @classmethod
     def _create_audio_tower(
         cls, config: UltravoxConfig
-    ) -> Union[transformers.Wav2Vec2Model, "ModifiedWhisperEncoder"]:
+    ) -> Union[transformers.Wav2Vec2Model, "ModifiedWhisperEncoder", "NestEncoder"]:
         if config.audio_model_id is not None:
             if "whisper" in config.audio_model_id.lower():
                 audio_tower = ModifiedWhisperEncoder.from_pretrained(
@@ -326,11 +332,29 @@ class UltravoxModel(transformers.LlamaPreTrainedModel):
                 audio_tower.init_latency_mask(
                     config.audio_latency_block_size, dtype=config.torch_dtype
                 )
+            elif "nest" in config.audio_model_id.lower():
+                if not NEMO_AVAILABLE:
+                    raise ImportError(
+                        "NeMo toolkit is required to use NEST Encoder. "
+                        "Please install it with `pip install nemo_toolkit[asr]`"
+                    )
+                logging.info(f"Using NVIDIA NEST Encoder: {config.audio_model_id}")
+                try:
+                    audio_tower = NestEncoder.from_pretrained(
+                        config.audio_model_id, 
+                        torch_dtype=config.torch_dtype,
+                        layer=config.nest_layer
+                    )
+                    audio_tower.init_latency_mask(
+                        config.audio_latency_block_size, dtype=config.torch_dtype
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load NEST encoder from {config.audio_model_id}. Error: {e}")
             else:
                 assert config.audio_latency_block_size in (
                     None,
                     0,
-                ), "only whisper audio tower supports audio latency masking, got non-zero value for 'audio_latency_block_size'"
+                ), f"only whisper and nest audio towers support audio latency masking, got non-zero value for 'audio_latency_block_size' with model {config.audio_model_id}"
                 audio_tower = transformers.AutoModel.from_pretrained(
                     config.audio_model_id, torch_dtype=config.torch_dtype
                 )
@@ -340,11 +364,30 @@ class UltravoxModel(transformers.LlamaPreTrainedModel):
                 audio_tower.init_latency_mask(
                     config.audio_latency_block_size, dtype=config.torch_dtype
                 )
+            elif "nest" in config.audio_config._name_or_path.lower():
+                if not NEMO_AVAILABLE:
+                    raise ImportError(
+                        "NeMo toolkit is required to use NEST Encoder. "
+                        "Please install it with `pip install nemo_toolkit[asr]`"
+                    )
+                logging.info(f"Using NVIDIA NEST Encoder from config")
+                try:
+                    # For NEST, we use the model path from the config name
+                    audio_tower = NestEncoder(
+                        model_path=config.audio_config._name_or_path,
+                        torch_dtype=config.torch_dtype,
+                        layer=config.nest_layer
+                    )
+                    audio_tower.init_latency_mask(
+                        config.audio_latency_block_size, dtype=config.torch_dtype
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"Failed to initialize NEST encoder from {config.audio_config._name_or_path}. Error: {e}")
             else:
                 assert config.audio_latency_block_size in (
                     None,
                     0,
-                ), "only whisper audio tower supports audio latency masking, got non-zero value for 'audio_latency_block_size'"
+                ), f"only whisper and nest audio towers support audio latency masking, got non-zero value for 'audio_latency_block_size' with model {config.audio_config._name_or_path}"
                 with transformers.modeling_utils.no_init_weights():
                     # we only ever use from_config if the weights are retrained, hence initializing is not
                     # required. This makes the model quite creation faster since init on CPU is quite slow.
